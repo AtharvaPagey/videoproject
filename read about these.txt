@@ -1,0 +1,10 @@
+http status codes
+CORS 
+http common headers
+controllers
+multer
+jsonwebtoken
+dotenv
+mongoose
+bcrypt
+routers
