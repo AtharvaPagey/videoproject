@@ -14,7 +14,7 @@ const userSchema = new Schema(
         ref: "Video",
       },
     ],
-    username: {
+    userName: {
       type: String,
       required: true,
       unique: true,
