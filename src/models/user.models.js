@@ -4,10 +4,6 @@ import bcrypt from "bcrypt";
 
 const userSchema = new Schema(
   {
-    id: {
-      type: String,
-      required: true,
-    },
     watchHistory: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -41,7 +37,6 @@ const userSchema = new Schema(
     },
     coverImage: {
       type: String,
-      required: true,
     },
     password: {
       type: String,
