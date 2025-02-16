@@ -4,6 +4,23 @@ import { User } from "../models/user.models.js";
 import { uploadonCloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 
+const generateAccessAndRefreshToken = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false }); // save func saves the data changes done but requires all the fields....to avoid this we use validateBeforeSave parameter
+    return { accessToken, refreshToken };
+  } catch (error) {
+    throw new ApiError(
+      500,
+      "Something went wrong while generating refresh and access token"
+    );
+  }
+};
+
 const registerUser = asyncHandler(async (req, res) => {
   // Algorithm:
 
@@ -73,6 +90,86 @@ const registerUser = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, createdUser, "User registered successfully"));
 });
 
-export { registerUser };
+const loginUser = asyncHandler(async (req, res) => {
+  // ALGORITHM:
+  // get data from req->body
+  // get details of the user: userName or email and password
+  // check if userName or email and password follow rules (if any)
+  // validate the userName and password from db
+  // if does not exist then redirect to register page
+  // check for any refreshToken on the user
+  // grant refreshToken and accessToken
+  // send cookie
+
+  const { email, userName, password } = req.body;
+  if (!userName || !email)
+    throw new ApiError(400, "username or email is required");
+
+  const user = await User.findOne({ $or: [{ email }, { userName }] });
+
+  if (!user) throw new ApiError(404, "User does not exist");
+
+  const isPasswordValid = await user.isPasswordCorrect(password);
+
+  if (!isPasswordValid) throw new ApiError(401, "Invalid user credentials");
+
+  const { accessToken, refreshToken } = await generateAccessAndRefreshToken(
+    user._id
+  );
+
+  const loggedinUser = User.findById(user._id).select(
+    "-password -refreshToken"
+  );
+
+  // normally cookies are modifiable from front end
+  // but opting these options we make the cokies modifiable only by the server
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
+
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refreshToken, options)
+    .json(
+      new ApiResponse(
+        200,
+        {
+          user: loggedinUser,
+          accessToken,
+          refreshToken,
+        },
+        "User Looged In Succefully"
+      )
+    );
+});
+
+const logoutUser = asyncHandler(async (req, res) => {
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        refreshToken: undefined,
+      },
+    },
+    {
+      new: true,
+    }
+  ); // This finds and updates the user._id
+
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
+
+  return res
+    .status(200)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken", options)
+    .json(new ApiResponse(200, {}, "User Logged Out Successfully"));
+});
+
+export { registerUser, loginUser, logoutUser };
 
 // .some method: Determines whether the specified callback function returns true for any element of an array.
