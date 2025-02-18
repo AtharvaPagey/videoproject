@@ -3,6 +3,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/user.models.js";
 import { uploadonCloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+import jwt from "jsonwebtoken";
 
 const generateAccessAndRefreshToken = async (userId) => {
   try {
@@ -101,8 +102,8 @@ const loginUser = asyncHandler(async (req, res) => {
   // grant refreshToken and accessToken
   // send cookie
 
-  const { email, userName, password } = req.body;
-  if (!userName || !email)
+  const { userName, email, password } = req.body;
+  if (!userName && !email)
     throw new ApiError(400, "username or email is required");
 
   const user = await User.findOne({ $or: [{ email }, { userName }] });
@@ -111,7 +112,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   const isPasswordValid = await user.isPasswordCorrect(password);
 
-  if (!isPasswordValid) throw new ApiError(401, "Invalid user credentials");
+  if (isPasswordValid) throw new ApiError(401, "Invalid user credentials");
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshToken(
     user._id
@@ -128,6 +129,8 @@ const loginUser = asyncHandler(async (req, res) => {
     secure: true,
   };
 
+  console.log(loggedinUser);
+
   return res
     .status(200)
     .cookie("accessToken", accessToken, options)
@@ -136,9 +139,9 @@ const loginUser = asyncHandler(async (req, res) => {
       new ApiResponse(
         200,
         {
-          user: loggedinUser,
-          accessToken,
-          refreshToken,
+          user: loggedinUser.o,
+          accessToken: accessToken,
+          refreshToken: refreshToken,
         },
         "User Looged In Succefully"
       )
@@ -170,6 +173,54 @@ const logoutUser = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "User Logged Out Successfully"));
 });
 
-export { registerUser, loginUser, logoutUser };
+const refreshaccessToken = asyncHandler(async (req, res) => {
+  const incomingRefreshToken =
+    req.cookies.refreshToken || req.body.refreshToken;
+
+  if (incomingRefreshToken) {
+    throw new ApiError(401, "Unauthorized Request");
+  }
+
+  try {
+    const decodedToken = jwt.verify(
+      incomingRefreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+
+    const user = await User.findById(decodedToken?._id);
+
+    if (!user) {
+      throw new ApiError(401, "Invalid Refresh Token");
+    }
+
+    if (user?.refreshToken !== incomingRefreshToken) {
+      throw new ApiError(401, "Refresh Token is expired or used");
+    }
+
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+
+    const { accessToken, newrefreshToken } =
+      await generateAccessAndRefreshToken(user._id);
+
+    return res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", newrefreshToken, options)
+      .json(
+        new ApiResponse(
+          200,
+          { accessToken, newrefreshToken },
+          "Access Token refreshed"
+        )
+      );
+  } catch (error) {
+    throw new ApiError(401, error?.message || "Invalid Refresh Token");
+  }
+});
+
+export { registerUser, loginUser, logoutUser, refreshaccessToken };
 
 // .some method: Determines whether the specified callback function returns true for any element of an array.
