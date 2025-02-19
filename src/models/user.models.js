@@ -51,7 +51,9 @@ const userSchema = new Schema(
 );
 
 userSchema.pre("save", async function (next) {
+  // this works only when we are saving or changing a password...it encrypts the password before saving
   if (!this.isModified("password")) return next();
+
   this.password = await bcrypt.hash(this.password, 10);
 });
 userSchema.methods.isPasswordCorrect = async function (password) {
