@@ -254,7 +254,7 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
 }); // use the auth middleware before this in route
 
 const updateUserAvatar = asyncHandler(async (req, res) => {
-  const avatarLocalPath = req.files.avatar[0].path;
+  const avatarLocalPath = req.file?.path;
   const oldAvatarUser = await User.findById(req.files._id);
   if (!avatarLocalPath) {
     throw new ApiError(401, "Avatar local path required");
