@@ -1,9 +1,11 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/user.models.js";
-import { uploadonCloudinary } from "../utils/cloudinary.js";
+import { uploadonCloudinary, cloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
+import { extractPublicId } from "cloudinary-build-url";
+import { app } from "../app.js";
 
 const generateAccessAndRefreshToken = async (userId) => {
   try {
@@ -23,19 +25,7 @@ const generateAccessAndRefreshToken = async (userId) => {
 };
 
 const registerUser = asyncHandler(async (req, res) => {
-  // Algorithm:
-
-  // get user details
-  // validate if details are correct: check for email and username
-  // check if user already exists: using username n email
-  // get an image and an avatar for the user
-  // upload the details to cloudnary: check if avatar n image is uploaded
-  // create a user object in db...as db needs an obj for working
-  // check if user obj was created
-  // remove confidential details like refresh token n passwd from the darabase
-  // return the response to the user
-
-  const { id, email, fullName, userName, password } = req.body;
+  const { email, fullName, userName, password } = req.body;
   if (
     [fullName, email, userName, password].some((field) => field?.trim() === "")
   ) {
@@ -92,18 +82,8 @@ const registerUser = asyncHandler(async (req, res) => {
 });
 
 const loginUser = asyncHandler(async (req, res) => {
-  // ALGORITHM:
-  // get data from req->body
-  // get details of the user: userName or email and password
-  // check if userName or email and password follow rules (if any)
-  // validate the userName and password from db
-  // if does not exist then redirect to register page
-  // check for any refreshToken on the user
-  // grant refreshToken and accessToken
-  // send cookie
-
   const { userName, email, password } = req.body;
-  if (!userName && !email)
+  if (!(userName || email))
     throw new ApiError(400, "username or email is required");
 
   const user = await User.findOne({ $or: [{ email }, { userName }] });
@@ -112,7 +92,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   const isPasswordValid = await user.isPasswordCorrect(password);
 
-  if (isPasswordValid) throw new ApiError(401, "Invalid user credentials");
+  if (!isPasswordValid) throw new ApiError(401, "Invalid user credentials");
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshToken(
     user._id
@@ -129,8 +109,6 @@ const loginUser = asyncHandler(async (req, res) => {
     secure: true,
   };
 
-  console.log(loggedinUser);
-
   return res
     .status(200)
     .cookie("accessToken", accessToken, options)
@@ -139,7 +117,7 @@ const loginUser = asyncHandler(async (req, res) => {
       new ApiResponse(
         200,
         {
-          user: loggedinUser.o,
+          user: user.userName,
           accessToken: accessToken,
           refreshToken: refreshToken,
         },
@@ -153,6 +131,7 @@ const logoutUser = asyncHandler(async (req, res) => {
     req.user._id,
     {
       $set: {
+        accessToken: undefined,
         refreshToken: undefined,
       },
     },
@@ -170,7 +149,15 @@ const logoutUser = asyncHandler(async (req, res) => {
     .status(200)
     .clearCookie("accessToken", options)
     .clearCookie("refreshToken", options)
-    .json(new ApiResponse(200, {}, "User Logged Out Successfully"));
+    .json(
+      new ApiResponse(
+        200,
+        {
+          user: req.user?.userName,
+        },
+        "User Logged Out Successfully"
+      )
+    );
 });
 
 const refreshaccessToken = asyncHandler(async (req, res) => {
@@ -267,12 +254,24 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
 }); // use the auth middleware before this in route
 
 const updateUserAvatar = asyncHandler(async (req, res) => {
-  const avatarLocalPath = req.file?.path;
+  const avatarLocalPath = req.files.avatar[0].path;
+  const oldAvatarUser = await User.findById(req.files._id);
   if (!avatarLocalPath) {
     throw new ApiError(401, "Avatar local path required");
   }
 
+  const oldAvatarUrl = oldAvatarUser;
+  console.log(oldAvatarUrl);
+  // const oldAvatarPublicId = extractPublicId(oldAvatarUrl);
+
   const avatar = await uploadonCloudinary(avatarLocalPath);
+
+  if (oldAvatarPublicId) {
+    await cloudinary.uploader
+      .destroy(oldAvatarPublicId, { invalidate: true })
+      .then(console.log("Previous image Deleted Successfully"))
+      .catch((error) => new ApiError(500, "Could not destroy old image"));
+  } else throw new ApiError(500, "Error while fetching old Avatar");
 
   if (!avatar.url) {
     throw new ApiError(401, "Error while uploading avatar on cloudinary");
@@ -296,7 +295,17 @@ const updateUsercoverImage = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Provide coverImage local path");
   }
 
+  const oldcoverImageUrl = req.body?._id?.coverImage;
+  const oldcoverImagePublicId = extractPublicId(oldcoverImageUrl);
+
   const coverImage = await uploadonCloudinary(coverImageLocalPath);
+
+  if (oldcoverImagePublicId) {
+    await cloudinary.uploader
+      .destroy(oldcoverImagePublicId, { invalidate: true })
+      .then(console.log("Previous image Deleted Successfully"))
+      .catch((error) => new ApiError(500, "Could not destroy the old image"));
+  } else throw new ApiError(500, "Error while fetching old coverImage");
 
   if (!coverImage.url) {
     throw new ApiError(500, "Could not upload coverImage on Cloudinary");
@@ -317,6 +326,72 @@ const updateUsercoverImage = asyncHandler(async (req, res) => {
     );
 });
 
+const getUserChannelProfile = asyncHandler(async (req, res) => {
+  const { userName } = req.params;
+  if (!userName?.trim()) {
+    throw new ApiError(400, "userName is missing");
+  }
+
+  const channel = await User.aggregate([
+    { $match: { username: userName?.toLowerCase() } },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "channel",
+        as: "subscriptions",
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "subscriber",
+        as: "subscribedTo",
+      },
+    },
+    {
+      $addFields: {
+        subscribersCount: {
+          $size: "$subscribers",
+        },
+        channelsSubscribedToCount: {
+          $size: "$subscribedTo",
+        },
+        isSubscribed: {
+          $cond: {
+            if: { $in: [req.user?._id, "$subscribers.subscriber"] },
+            then: true,
+            else: false,
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        fullName: 1,
+        userName: 1,
+        subscribersCount: 1,
+        channelsSubscribedToCount: 1,
+        isSubscribed: 1,
+        avatar: 1,
+        coverImage: 1,
+        email: 1,
+      },
+    },
+  ]);
+
+  if (!channel?.length) {
+    throw new ApiError(404, "Channel does not exist");
+  }
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, channel[0], "User channel fetched successfully")
+    );
+});
+
 export {
   registerUser,
   loginUser,
@@ -327,6 +402,7 @@ export {
   updateAccountDetails,
   updateUserAvatar,
   updateUsercoverImage,
+  getUserChannelProfile,
 };
 
 // .some method: Determines whether the specified callback function returns true for any element of an array.
