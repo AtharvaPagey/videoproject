@@ -5,7 +5,7 @@ import { uploadonCloudinary, cloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import { extractPublicId } from "cloudinary-build-url";
-import { app } from "../app.js";
+import mongoose from "mongoose";
 
 const generateAccessAndRefreshToken = async (userId) => {
   try {
@@ -130,9 +130,9 @@ const logoutUser = asyncHandler(async (req, res) => {
   await User.findByIdAndUpdate(
     req.user._id,
     {
-      $set: {
-        accessToken: undefined,
-        refreshToken: undefined,
+      $unset: {
+        accessToken: 1,
+        refreshToken: 1,
       },
     },
     {
@@ -333,13 +333,13 @@ const getUserChannelProfile = asyncHandler(async (req, res) => {
   }
 
   const channel = await User.aggregate([
-    { $match: { username: userName?.toLowerCase() } },
+    { $match: { userName: userName?.toLowerCase() } },
     {
       $lookup: {
         from: "subscriptions",
         localField: "_id",
         foreignField: "channel",
-        as: "subscriptions",
+        as: "subscribers",
       },
     },
     {
